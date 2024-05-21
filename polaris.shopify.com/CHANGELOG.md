@@ -1,5 +1,11 @@
 # polaris.shopify.com
 
+## 1.0.7
+
+### Patch Changes
+
+- [#12017](https://github.com/Shopify/polaris/pull/12017) [`b54975aef`](https://github.com/Shopify/polaris/commit/b54975aefad21039ec222e1d81a4e3b5a16683ae) Thanks [@sarahill](https://github.com/sarahill)! - Updated common action pattern guidance for add actions
+
 ## 1.0.6
 
 ### Patch Changes
