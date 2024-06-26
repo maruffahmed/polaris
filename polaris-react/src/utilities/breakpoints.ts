@@ -30,13 +30,13 @@ const noWindowMatches: MediaQueryList = {
 function noop() {}
 
 export function navigationBarCollapsed() {
-  return isServer
+  return typeof window === 'undefined'
     ? noWindowMatches
     : window.matchMedia(`(max-width: ${Breakpoints.navigationBarCollapsed})`);
 }
 
 export function stackedContent() {
-  return isServer
+  return typeof window === 'undefined'
     ? noWindowMatches
     : window.matchMedia(`(max-width: ${Breakpoints.stackedContent})`);
 }
@@ -56,45 +56,40 @@ type BreakpointsMatches = {
   [DirectionAlias in BreakpointsDirectionAlias]: boolean;
 };
 
-const hookCallbacks = new Set<
-  (breakpointAlias: BreakpointsDirectionAlias, matches: boolean) => void
->();
 const breakpointsQueryEntries = getBreakpointsQueryEntries(
   themeDefault.breakpoints,
 );
 
-if (!isServer) {
-  breakpointsQueryEntries.forEach(([breakpointAlias, query]) => {
-    const eventListener = (event: {matches: boolean}) => {
-      for (const hookCallback of hookCallbacks) {
-        hookCallback(breakpointAlias, event.matches);
-      }
-    };
-    const mql = window.matchMedia(query);
-    if (mql.addListener) {
-      mql.addListener(eventListener);
-    } else {
-      mql.addEventListener('change', eventListener);
-    }
-  });
-}
+function getMatches(
+  defaults?: UseBreakpointsOptions['defaults'],
+  /**
+   * Used to force defaults on initial client side render so they match SSR
+   * values and hence avoid a Hydration error.
+   */
+  forceDefaults?: boolean,
+) {
+  if (!isServer && !forceDefaults) {
+    return Object.fromEntries(
+      breakpointsQueryEntries.map(([directionAlias, query]) => [
+        directionAlias,
+        window.matchMedia(query).matches,
+      ]),
+    ) as BreakpointsMatches;
+  }
 
-function getDefaultMatches(defaults?: UseBreakpointsOptions['defaults']) {
+  if (typeof defaults === 'object' && defaults !== null) {
+    return Object.fromEntries(
+      breakpointsQueryEntries.map(([directionAlias]) => [
+        directionAlias,
+        defaults[directionAlias] ?? false,
+      ]),
+    ) as BreakpointsMatches;
+  }
+
   return Object.fromEntries(
     breakpointsQueryEntries.map(([directionAlias]) => [
       directionAlias,
-      typeof defaults === 'boolean'
-        ? defaults
-        : defaults?.[directionAlias] ?? false,
-    ]),
-  ) as BreakpointsMatches;
-}
-
-function getLiveMatches() {
-  return Object.fromEntries(
-    breakpointsQueryEntries.map(([directionAlias, query]) => [
-      directionAlias,
-      window.matchMedia(query).matches,
+      defaults ?? false,
     ]),
   ) as BreakpointsMatches;
 }
@@ -134,28 +129,36 @@ export function useBreakpoints(options?: UseBreakpointsOptions) {
   // Later, in the effect, we will call this again on the client side without
   // any defaults to trigger a more accurate client side evaluation.
   const [breakpoints, setBreakpoints] = useState(
-    getDefaultMatches(options?.defaults),
+    getMatches(options?.defaults, true),
   );
 
   useIsomorphicLayoutEffect(() => {
-    // Now that we're client side, get the real values
-    setBreakpoints(getLiveMatches());
+    const mediaQueryLists = breakpointsQueryEntries.map(([_, query]) =>
+      window.matchMedia(query),
+    );
 
-    // Register a callback to set the breakpoints object whenever there's a
-    // change in the future
-    const callback = (
-      breakpointAlias: BreakpointsDirectionAlias,
-      matches: boolean,
-    ) => {
-      setBreakpoints((prevBreakpoints) => ({
-        ...prevBreakpoints,
-        [breakpointAlias]: matches,
-      }));
-    };
-    hookCallbacks.add(callback);
+    const handler = () => setBreakpoints(getMatches());
+
+    mediaQueryLists.forEach((mql) => {
+      if (mql.addListener) {
+        mql.addListener(handler);
+      } else {
+        mql.addEventListener('change', handler);
+      }
+    });
+
+    // Trigger the breakpoint recalculation at least once client-side to ensure
+    // we don't have stale default values from SSR.
+    handler();
 
     return () => {
-      hookCallbacks.delete(callback);
+      mediaQueryLists.forEach((mql) => {
+        if (mql.removeListener) {
+          mql.removeListener(handler);
+        } else {
+          mql.removeEventListener('change', handler);
+        }
+      });
     };
   }, []);
 
